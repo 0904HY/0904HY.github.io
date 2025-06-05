@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>オフライン将棋</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+    }
+    table {
+      border-collapse: collapse;
+      margin: auto;
+    }
+    td {
+      width: 50px;
+      height: 50px;
+      border: 1px solid #000;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .selected {
+      background-color: yellow;
+    }
+    .hand {
+      margin: 10px;
+    }
+    .gote {
+      transform: rotate(180deg);
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <h1>オフライン将棋</h1>
+  <div class="hand" id="sente-hand">先手持ち駒:</div>
+  <table id="board"></table>
+  <div class="hand" id="gote-hand">後手持ち駒:</div>
+  <div id="message"></div>
+
+  <script>
+    const boardElem = document.getElementById("board");
+    const senteHandDiv = document.getElementById("sente-hand");
+    const goteHandDiv = document.getElementById("gote-hand");
+    const messageDiv = document.getElementById("message");
+
+    const promoteMap = { '歩': 'と', '香': '成香', '桂': '成桂', '銀': '成銀', '角': '馬', '飛': '龍' };
+    const demoteMap = Object.fromEntries(Object.entries(promoteMap).map(([k, v]) => [v, k]));
+
+    let turn = '先手';
+    let selected = null;
+    const senteHand = [];
+    const goteHand = [];
+
+    const initialBoard = [
+      ['香','桂','銀','金','王','金','銀','桂','香'],
+      [null,'飛',null,null,null,null,null,'角',null],
+      ['歩','歩','歩','歩','歩','歩','歩','歩','歩'],
+      ...Array(3).fill(Array(9).fill(null)),
+      ['歩','歩','歩','歩','歩','歩','歩','歩','歩'],
+      [null,'角',null,null,null,null,null,'飛',null],
+      ['香','桂','銀','金','玉','金','銀','桂','香']
+    ];
+
+    const board = initialBoard.map((row, y) => row.map((p, x) => {
+      if (!p) return null;
+      const owner = y < 3 ? '後手' : y > 5 ? '先手' : null;
+      return { piece: p, owner };
+    }));
+
+    function drawBoard() {
+      boardElem.innerHTML = "";
+      for (let y = 0; y < 9; y++) {
+        const row = document.createElement("tr");
+        for (let x = 0; x < 9; x++) {
+          const cell = document.createElement("td");
+          const data = board[y][x];
+          cell.dataset.x = x;
+          cell.dataset.y = y;
+          if (data) {
+            const span = document.createElement("span");
+            span.textContent = data.piece;
+            if (data.owner === '後手') span.className = 'gote';
+            cell.appendChild(span);
+          }
+          if (selected && selected.x == x && selected.y == y) cell.classList.add("selected");
+          cell.addEventListener("click", handleCellClick);
+          row.appendChild(cell);
+        }
+        boardElem.appendChild(row);
+      }
+      drawHands();
+    }
+
+    function drawHands() {
+      senteHandDiv.innerHTML = '先手持ち駒: ' + senteHand.map(p => `<span onclick="selectHand('${p}','先手')">${p}</span>`).join(' ');
+      goteHandDiv.innerHTML = '後手持ち駒: ' + goteHand.map(p => `<span class='gote' onclick="selectHand('${p}','後手')">${p}</span>`).join(' ');
+    }
+
+    function selectHand(piece, player) {
+      if (turn !== player) return;
+      selected = { piece, fromHand: true };
+    }
+
+    function handleCellClick(e) {
+      const x = parseInt(e.currentTarget.dataset.x);
+      const y = parseInt(e.currentTarget.dataset.y);
+      const clicked = board[y][x];
+
+      if (selected) {
+        if (selected.fromHand) {
+          if (!clicked) {
+            board[y][x] = { piece: selected.piece, owner: turn };
+            removeFromHand(selected.piece, turn);
+            selected = null;
+            nextTurn();
+          }
+        } else if (selected.x === x && selected.y === y) {
+          selected = null;
+        } else {
+          const from = board[selected.y][selected.x];
+          if (clicked && clicked.owner === turn) {
+            selected = { x, y };
+          } else {
+            const legal = getMovableSquares(board, selected.x, selected.y, turn)
+              .some(([mx, my]) => mx === x && my === y);
+            if (legal) {
+              if (clicked) addToHand(clicked.piece, turn);
+              const movePiece = { ...from };
+              if (shouldPromote(from.piece, selected.y, y, turn)) {
+                if (confirm("成りますか？")) movePiece.piece = promoteMap[from.piece];
+              }
+              board[y][x] = movePiece;
+              board[selected.y][selected.x] = null;
+              selected = null;
+              nextTurn();
+            }
+          }
+        }
+      } else {
+        if (clicked && clicked.owner === turn) selected = { x, y };
+      }
+      drawBoard();
+    }
+
+    function removeFromHand(piece, player) {
+      const hand = player === '先手' ? senteHand : goteHand;
+      const idx = hand.indexOf(piece);
+      if (idx !== -1) hand.splice(idx, 1);
+    }
+
+    function addToHand(piece, player) {
+      const hand = player === '先手' ? senteHand : goteHand;
+      hand.push(demoteMap[piece] || piece);
+    }
+
+    function nextTurn() {
+      const winner = checkForWin(board);
+      if (winner) messageDiv.textContent = `勝者: ${winner}`;
+      else turn = turn === '先手' ? '後手' : '先手';
+    }
+
+    // 必要な補助関数は別JSファイルまたはscriptで読み込み可
+    // ここでは window に公開（Shogi Engine Upgrade の統合）
+    window.getMovableSquares = getMovableSquares;
+    window.shouldPromote = shouldPromote;
+    window.checkForWin = checkForWin;
+
+    drawBoard();
+  </script>
+  <script src="shogi_engine_upgrade.js"></script>
+</body>
+</html>
